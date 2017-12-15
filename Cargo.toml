@@ -5,4 +5,4 @@ authors = ["jpg"]
 
 [dependencies]
 llvm-sys = "38"
-
+num = "0.1.41"

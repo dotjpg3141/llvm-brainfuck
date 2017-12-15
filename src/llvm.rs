@@ -17,6 +17,8 @@ macro_rules! llvm_str {
 }
 
 pub type LLVMString = *const i8;
+pub type Value = LLVMValueRef;
+pub type BasicBlock = LLVMBasicBlockRef;
 
 pub struct Module {
     inner_context: LLVMContextRef,
@@ -39,7 +41,12 @@ pub struct Builder {
 
 #[derive(Copy, Clone)]
 pub struct Function {
-    pub value: LLVMValueRef,
+    pub value: Value,
+}
+
+#[derive(Copy, Clone)]
+pub struct PhiNode {
+    pub value: Value,
 }
 
 impl Module {
@@ -84,11 +91,7 @@ impl Module {
         }
     }
 
-    pub fn append_basic_block(
-        &self,
-        function: Function,
-        block_name: LLVMString,
-    ) -> LLVMBasicBlockRef {
+    pub fn append_basic_block(&self, function: Function, block_name: LLVMString) -> BasicBlock {
         unsafe { LLVMAppendBasicBlockInContext(self.inner_context, function.value, block_name) }
     }
 
@@ -153,7 +156,7 @@ impl Type {
 }
 
 impl Builder {
-    pub fn new(module: &Module, bb: LLVMBasicBlockRef) -> Self {
+    pub fn new(module: &Module, bb: BasicBlock) -> Self {
         unsafe {
             let inner_builder = LLVMCreateBuilderInContext(module.inner_context);
             LLVMPositionBuilderAtEnd(inner_builder, bb);
@@ -161,50 +164,35 @@ impl Builder {
         }
     }
 
-    pub fn add(
-        &self,
-        lhs: LLVMValueRef,
-        rhs: LLVMValueRef,
-        result_name: LLVMString,
-    ) -> LLVMValueRef {
-        unsafe { LLVMBuildAdd(self.inner_builder, lhs, rhs, result_name) }
-    }
-
-    pub fn call(
-        &self,
-        function: Function,
-        arguments: &mut [LLVMValueRef],
-        result_name: LLVMString,
-    ) -> LLVMValueRef {
+    pub fn call(&self, function: Function, arguments: &mut [Value], name: LLVMString) -> Value {
         unsafe {
             LLVMBuildCall(
                 self.inner_builder,
                 function.value,
                 arguments.as_mut_ptr(),
                 arguments.len() as u32,
-                result_name,
+                name,
             )
         }
     }
 
-    pub fn call_void(&self, function: Function, arguments: &mut [LLVMValueRef]) -> LLVMValueRef {
+    pub fn call_void(&self, function: Function, arguments: &mut [Value]) -> Value {
         self.call(function, arguments, llvm_str!(b"\0"))
     }
 
-    pub fn load(&self, ptr_source: LLVMValueRef, result_name: LLVMString) -> LLVMValueRef {
-        unsafe { LLVMBuildLoad(self.inner_builder, ptr_source, result_name) }
+    pub fn alloca(&self, tp: Type, name: LLVMString) -> Value {
+        unsafe { LLVMBuildAlloca(self.inner_builder, tp.inner_type, name) }
     }
 
-    pub fn store(&self, value: LLVMValueRef, ptr_destination: LLVMValueRef) -> LLVMValueRef {
+    pub fn load(&self, ptr_source: Value, name: LLVMString) -> Value {
+        unsafe { LLVMBuildLoad(self.inner_builder, ptr_source, name) }
+    }
+
+    pub fn store(&self, value: Value, ptr_destination: Value) -> Value {
         unsafe { LLVMBuildStore(self.inner_builder, value, ptr_destination) }
     }
 
-    pub fn getelementptr(
-        &self,
-        pointer: LLVMValueRef,
-        index: LLVMValueRef,
-        result_name: LLVMString,
-    ) -> LLVMValueRef {
+    pub fn getelementptr(&self, pointer: Value, index: Value, name: LLVMString) -> Value {
         let mut indeces = vec![index];
         unsafe {
             LLVMBuildGEP(
@@ -212,46 +200,73 @@ impl Builder {
                 pointer,
                 indeces.as_mut_ptr(),
                 indeces.len() as u32,
-                result_name,
+                name,
             )
         }
     }
 
-    pub fn icmp(
-        &self,
-        op: LLVMIntPredicate,
-        lhs: LLVMValueRef,
-        rhs: LLVMValueRef,
-        result_name: LLVMString,
-    ) -> LLVMValueRef {
-        unsafe { LLVMBuildICmp(self.inner_builder, op, lhs, rhs, result_name) }
+    pub fn add(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
+        unsafe { LLVMBuildAdd(self.inner_builder, lhs, rhs, name) }
     }
 
-    pub fn const_unsigned_int(&self, tp: Type, value: u64) -> LLVMValueRef {
+    pub fn icmp(&self, op: LLVMIntPredicate, lhs: Value, rhs: Value, name: LLVMString) -> Value {
+        unsafe { LLVMBuildICmp(self.inner_builder, op, lhs, rhs, name) }
+    }
+
+    pub fn udiv(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
+        unsafe { LLVMBuildUDiv(self.inner_builder, lhs, rhs, name) }
+    }
+
+    pub fn urem(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
+        unsafe { LLVMBuildURem(self.inner_builder, lhs, rhs, name) }
+    }
+
+    pub fn const_unsigned_int(&self, tp: Type, value: u64) -> Value {
         unsafe { LLVMConstInt(tp.inner_type, value, 0) }
     }
 
-    pub fn const_signed_int(&self, tp: Type, value: i64) -> LLVMValueRef {
+    pub fn const_signed_int(&self, tp: Type, value: i64) -> Value {
         unsafe { LLVMConstInt(tp.inner_type, value as u64, 1) }
     }
 
-    pub fn ret(&self, value: LLVMValueRef) {
+    pub fn bit_cast(&self, value: Value, dest_type: Type, name: LLVMString) -> Value {
+        unsafe { LLVMBuildBitCast(self.inner_builder, value, dest_type.inner_type, name) }
+    }
+
+    pub fn trunc(&self, value: Value, dest_type: Type, name: LLVMString) -> Value {
+        unsafe { LLVMBuildTrunc(self.inner_builder, value, dest_type.inner_type, name) }
+    }
+
+    pub fn ret(&self, value: Value) {
         unsafe {
             LLVMBuildRet(self.inner_builder, value);
         }
     }
 
-    pub fn br(&self, dest: LLVMBasicBlockRef) -> LLVMValueRef {
+    pub fn ret_void(&self) {
+        unsafe {
+            LLVMBuildRetVoid(self.inner_builder);
+        }
+    }
+
+    pub fn br(&self, dest: BasicBlock) -> Value {
         unsafe { LLVMBuildBr(self.inner_builder, dest) }
     }
 
     pub fn cond_br(
         &self,
-        if_value: LLVMValueRef,
-        then_block: LLVMBasicBlockRef,
-        else_block: LLVMBasicBlockRef,
-    ) -> LLVMValueRef {
+        if_value: Value,
+        then_block: BasicBlock,
+        else_block: BasicBlock,
+    ) -> Value {
         unsafe { LLVMBuildCondBr(self.inner_builder, if_value, then_block, else_block) }
+    }
+
+    pub fn phi(&self, tp: Type, name: LLVMString) -> PhiNode {
+        unsafe {
+            let value = LLVMBuildPhi(self.inner_builder, tp.inner_type, name);
+            PhiNode { value }
+        }
     }
 }
 
@@ -273,7 +288,23 @@ impl Function {
         }
     }
 
-    pub fn append_basic_block(&self, name: LLVMString) -> LLVMBasicBlockRef {
+    pub fn append_basic_block(&self, name: LLVMString) -> BasicBlock {
         unsafe { LLVMAppendBasicBlock(self.value, name) }
+    }
+
+    pub fn get_param(&self, index: u32) -> Value {
+        unsafe { LLVMGetParam(self.value, index) }
+    }
+
+    pub fn null() -> Self {
+        Function { value: ptr::null_mut() }
+    }
+}
+
+impl PhiNode {
+    pub fn add_incoming(&self, incoming_value: Value, incoming_block: BasicBlock) {
+        let mut values = vec![incoming_value];
+        let mut block = vec![incoming_block];
+        unsafe { LLVMAddIncoming(self.value, values.as_mut_ptr(), block.as_mut_ptr(), 1) }
     }
 }
