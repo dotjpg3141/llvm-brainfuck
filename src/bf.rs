@@ -1,50 +1,75 @@
 use std::str::Chars;
 use self::BfInstruction::*;
 
-pub fn parse_bf(chars: Chars) -> Vec<BfInstruction> {
-
-    let mut result = InstructionList::new();
-    for c in chars.fuse() {
-        let insn = match c {
-            '-' => Some(AddValue(-1)),
-            '+' => Some(AddValue(1)),
-            '<' => Some(AddPointer(-1)),
-            '>' => Some(AddPointer(1)),
-            ',' => Some(Input),
-            '.' => Some(Output),
-            '[' => Some(BeginLoop),
-            ']' => Some(EndLoop),
-            _ => None,
-        };
-        if let Some(insn) = insn {
-            result.push(insn);
-        }
-    }
-    return result.list;
+pub struct BfMachine {
+    pub cache_size: i64,
+    pub instructions: InstructionList,
+    pub memory_overflow: MemoryOverflowBehaviour,
 }
 
-pub fn optimize(input: Vec<BfInstruction>) -> Vec<BfInstruction> {
-    let mut result = InstructionList::new();
-    for insn in input {
-        result.push(insn);
-    }
-    return result.list;
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum BfInstruction {
+    SetValue(i8),
+    AddValue(i8),
+    AddPointer(i64),
+    Input,
+    Output,
+    BeginLoop,
+    EndLoop,
+    DebugLog,
 }
 
-struct InstructionList {
-    list: Vec<BfInstruction>,
+//TODO(jpg): add 'resize memory'
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum MemoryOverflowBehaviour {
+    Undefined,
+    Wrap,
+    Abort,
+}
+
+pub struct InstructionList {
+    pub list: Vec<BfInstruction>,
     loop_comment_depth: u32,
 }
 
 impl InstructionList {
-    fn new() -> Self {
+    pub fn new() -> Self {
         InstructionList {
             list: Vec::new(),
             loop_comment_depth: 0,
         }
     }
 
-    fn push(&mut self, insn: BfInstruction) {
+    pub fn from_vec(input: Vec<BfInstruction>) -> Self {
+        let mut list = Self::new();
+        for insn in input {
+            list.push(insn);
+        }
+        list
+    }
+
+    pub fn from_chars(input: Chars) -> Self {
+        let mut result = InstructionList::new();
+        for c in input.fuse() {
+            let insn = match c {
+                '-' => Some(AddValue(-1)),
+                '+' => Some(AddValue(1)),
+                '<' => Some(AddPointer(-1)),
+                '>' => Some(AddPointer(1)),
+                ',' => Some(Input),
+                '.' => Some(Output),
+                '[' => Some(BeginLoop),
+                ']' => Some(EndLoop),
+                _ => None,
+            };
+            if let Some(insn) = insn {
+                result.push(insn);
+            }
+        }
+        return result;
+    }
+
+    pub fn push(&mut self, insn: BfInstruction) {
 
         if self.loop_comment_depth != 0 {
             match insn {
@@ -65,13 +90,13 @@ impl InstructionList {
             // value += a; value += b; => value += a + b;
             (Some(&AddValue(value)), AddValue(other)) => {
                 self.list.pop();
-                self.push(AddValue(value + other));
+                self.push(AddValue(value.wrapping_add(other)));
             }
 
             // value = a; value += b; => value = a + b;
             (Some(&SetValue(value)), AddValue(other)) => {
                 self.list.pop();
-                self.push(SetValue(value + other));
+                self.push(SetValue(value.wrapping_add(other)));
             }
 
             // value  = a; value = b; => value = b;
@@ -96,6 +121,16 @@ impl InstructionList {
                 self.push(SetValue(0));
             }
 
+            // while(value != 0) { ... }; value += a; => while(value != 0) { ... }; value = a;
+            (Some(&EndLoop), AddValue(value)) => {
+                self.push(SetValue(value));
+            }
+
+            // while(value != 0) { ... }; value = 0; => while(value != 0) { ... };
+            (Some(&EndLoop), SetValue(0)) => {
+                // drop instruction
+            }
+
             // value = 0;           while(value) { ... } => value = 0;
             // while(a) { stmt(); } while(a)     { ... } => while (a) { stmt(); }
             (Some(&SetValue(0)), BeginLoop) |
@@ -106,29 +141,10 @@ impl InstructionList {
             _ => self.list.push(insn),
         }
     }
-}
-
-pub struct BfMachine {
-    pub cache_size: i64,
-    pub instructions: Vec<BfInstruction>,
-    pub memory_overflow: MemoryOverflowBehaviour,
-    pub emit_debug_log: bool,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum BfInstruction {
-    SetValue(i8),
-    AddValue(i8),
-    AddPointer(i64),
-    Input,
-    Output,
-    BeginLoop,
-    EndLoop,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum MemoryOverflowBehaviour {
-    Undefined,
-    Wrap,
-    Abort,
+    
+    pub fn insert_debug_logs(&mut self) {
+    	for i in 0..self.list.len()+1 {
+    		self.list.insert(i * 2, BfInstruction::DebugLog);
+    	}
+    }
 }

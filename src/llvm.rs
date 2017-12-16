@@ -8,6 +8,7 @@ use self::sys::core::*;
 use self::sys::execution_engine::*;
 use self::sys::target::*;
 use self::sys::analysis::*;
+use llvm::sys::transforms::pass_manager_builder::*;
 
 macro_rules! llvm_str {
 	($e:expr) => {{
@@ -25,6 +26,7 @@ pub struct Module {
     inner_module: LLVMModuleRef,
 
     pub void_type: Type,
+    pub i1_type: Type,
     pub i8_type: Type,
     pub i32_type: Type,
 }
@@ -56,6 +58,7 @@ impl Module {
             let inner_module = LLVMModuleCreateWithNameInContext(module_name, inner_context);
 
             let void_type = Type::new(LLVMVoidTypeInContext(inner_context));
+            let i1_type = Type::new(LLVMInt1TypeInContext(inner_context));
             let i8_type = Type::new(LLVMInt8TypeInContext(inner_context));
             let i32_type = Type::new(LLVMInt32TypeInContext(inner_context));
 
@@ -64,6 +67,7 @@ impl Module {
                 inner_module,
 
                 void_type,
+                i1_type,
                 i8_type,
                 i32_type,
             }
@@ -112,6 +116,21 @@ impl Module {
         }
     }
 
+    pub fn optimize(&self, opt_level: u32) {
+        unsafe {
+
+            let manager_builder = LLVMPassManagerBuilderCreate();
+            LLVMPassManagerBuilderSetOptLevel(manager_builder, opt_level);
+
+            let pass_manager = LLVMCreatePassManager();
+            LLVMPassManagerBuilderPopulateModulePassManager(manager_builder, pass_manager);
+            LLVMPassManagerBuilderDispose(manager_builder);
+            LLVMRunPassManager(pass_manager, self.inner_module);
+
+            LLVMDisposePassManager(pass_manager);
+        }
+    }
+
     pub fn jit_function(&self, function_name: LLVMString) {
         unsafe {
             LLVMLinkInMCJIT();
@@ -155,6 +174,56 @@ impl Type {
     }
 }
 
+macro_rules! build_bin_op {
+	($op_name:ident, $fn_name:ident) => {
+		impl Builder {
+			pub fn $op_name<LV: LoadValue, RV: LoadValue, RetV: StoreValue<Result>, Result>(
+				&self,
+				lhs_value: LV,
+				rhs_value: RV,
+				result: RetV,
+				) -> Result {
+				unsafe {
+					let ret = $fn_name(
+						self.inner_builder,
+						lhs_value.load_value(self),
+						rhs_value.load_value(self),
+						result.get_name());
+					result.store_value(self, ret)
+				}
+			}
+		}
+	}
+}
+
+macro_rules! build_cast_op {
+	($op_name:ident, $fn_name:ident) => {
+		impl Builder {
+			pub fn $op_name<V: LoadValue, RetV: StoreValue<Result>, Result>(
+				&self,
+				value: V,
+				tp: Type,
+				result: RetV,
+				) -> Result {
+				unsafe {
+					let ret = $fn_name(
+						self.inner_builder,
+						value.load_value(self),
+						tp.inner_type,
+						result.get_name());
+					result.store_value(self, ret)
+				}
+			}
+		}
+	}
+}
+
+build_bin_op!(add, LLVMBuildAdd);
+build_bin_op!(udiv, LLVMBuildUDiv);
+build_bin_op!(urem, LLVMBuildURem);
+build_cast_op!(bit_cast, LLVMBuildBitCast);
+build_cast_op!(trunc, LLVMBuildTrunc);
+
 impl Builder {
     pub fn new(module: &Module, bb: BasicBlock) -> Self {
         unsafe {
@@ -164,82 +233,91 @@ impl Builder {
         }
     }
 
-    pub fn call(&self, function: Function, arguments: &mut [Value], name: LLVMString) -> Value {
+    pub fn uint(&self, tp: Type, value: u64) -> Value {
+        unsafe { LLVMConstInt(tp.inner_type, value, 0) }
+    }
+
+    pub fn sint(&self, tp: Type, value: i64) -> Value {
+        unsafe { LLVMConstInt(tp.inner_type, value as u64, 1) }
+    }
+
+    pub fn call<RetV: StoreValue<R>, R>(
+        &self,
+        function: Function,
+        arguments: &mut [Value],
+        result: RetV,
+    ) -> R {
         unsafe {
-            LLVMBuildCall(
+            let ret = LLVMBuildCall(
                 self.inner_builder,
                 function.value,
                 arguments.as_mut_ptr(),
                 arguments.len() as u32,
-                name,
-            )
+                result.get_name(),
+            );
+            result.store_value(self, ret)
         }
-    }
-
-    pub fn call_void(&self, function: Function, arguments: &mut [Value]) -> Value {
-        self.call(function, arguments, llvm_str!(b"\0"))
     }
 
     pub fn alloca(&self, tp: Type, name: LLVMString) -> Value {
         unsafe { LLVMBuildAlloca(self.inner_builder, tp.inner_type, name) }
     }
 
-    pub fn load(&self, ptr_source: Value, name: LLVMString) -> Value {
-        unsafe { LLVMBuildLoad(self.inner_builder, ptr_source, name) }
+    pub fn load<V: LoadValue>(&self, ptr_source: V, name: LLVMString) -> Value {
+        unsafe { LLVMBuildLoad(self.inner_builder, ptr_source.load_value(self), name) }
     }
 
-    pub fn store(&self, value: Value, ptr_destination: Value) -> Value {
-        unsafe { LLVMBuildStore(self.inner_builder, value, ptr_destination) }
-    }
-
-    pub fn getelementptr(&self, pointer: Value, index: Value, name: LLVMString) -> Value {
-        let mut indeces = vec![index];
+    pub fn store<V: LoadValue, PV: LoadValue>(&self, value: V, ptr_dest: PV) -> Value {
         unsafe {
-            LLVMBuildGEP(
+            LLVMBuildStore(
                 self.inner_builder,
-                pointer,
-                indeces.as_mut_ptr(),
-                indeces.len() as u32,
-                name,
+                value.load_value(self),
+                ptr_dest.load_value(self),
             )
         }
     }
 
-    pub fn add(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
-        unsafe { LLVMBuildAdd(self.inner_builder, lhs, rhs, name) }
-    }
-
-    pub fn icmp(&self, op: LLVMIntPredicate, lhs: Value, rhs: Value, name: LLVMString) -> Value {
-        unsafe { LLVMBuildICmp(self.inner_builder, op, lhs, rhs, name) }
-    }
-
-    pub fn udiv(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
-        unsafe { LLVMBuildUDiv(self.inner_builder, lhs, rhs, name) }
-    }
-
-    pub fn urem(&self, lhs: Value, rhs: Value, name: LLVMString) -> Value {
-        unsafe { LLVMBuildURem(self.inner_builder, lhs, rhs, name) }
-    }
-
-    pub fn const_unsigned_int(&self, tp: Type, value: u64) -> Value {
-        unsafe { LLVMConstInt(tp.inner_type, value, 0) }
-    }
-
-    pub fn const_signed_int(&self, tp: Type, value: i64) -> Value {
-        unsafe { LLVMConstInt(tp.inner_type, value as u64, 1) }
-    }
-
-    pub fn bit_cast(&self, value: Value, dest_type: Type, name: LLVMString) -> Value {
-        unsafe { LLVMBuildBitCast(self.inner_builder, value, dest_type.inner_type, name) }
-    }
-
-    pub fn trunc(&self, value: Value, dest_type: Type, name: LLVMString) -> Value {
-        unsafe { LLVMBuildTrunc(self.inner_builder, value, dest_type.inner_type, name) }
-    }
-
-    pub fn ret(&self, value: Value) {
+    pub fn getelementptr<PV: LoadValue, IV: LoadValue, RetV: StoreValue<R>, R>(
+        &self,
+        pointer: PV,
+        index: IV,
+        result: RetV,
+    ) -> R {
+        let mut indeces = vec![index.load_value(self)];
         unsafe {
-            LLVMBuildRet(self.inner_builder, value);
+            let ret = LLVMBuildGEP(
+                self.inner_builder,
+                pointer.load_value(self),
+                indeces.as_mut_ptr(),
+                indeces.len() as u32,
+                result.get_name(),
+            );
+            result.store_value(self, ret)
+        }
+    }
+
+    pub fn icmp<LV: LoadValue, RV: LoadValue, RetV: StoreValue<R>, R>(
+        &self,
+        op: LLVMIntPredicate,
+        lhs: LV,
+        rhs: RV,
+        result: RetV,
+    ) -> R {
+        unsafe {
+            let ret = LLVMBuildICmp(
+                self.inner_builder,
+                op,
+                lhs.load_value(self),
+                rhs.load_value(self),
+                result.get_name(),
+            );
+            result.store_value(self, ret)
+        }
+    }
+
+    pub fn ret<V: LoadValue>(&self, value: V) {
+        unsafe {
+            LLVMBuildRet(self.inner_builder, value.load_value(self));
         }
     }
 
@@ -253,13 +331,20 @@ impl Builder {
         unsafe { LLVMBuildBr(self.inner_builder, dest) }
     }
 
-    pub fn cond_br(
+    pub fn cond_br<V: LoadValue>(
         &self,
-        if_value: Value,
+        if_value: V,
         then_block: BasicBlock,
         else_block: BasicBlock,
     ) -> Value {
-        unsafe { LLVMBuildCondBr(self.inner_builder, if_value, then_block, else_block) }
+        unsafe {
+            LLVMBuildCondBr(
+                self.inner_builder,
+                if_value.load_value(self),
+                then_block,
+                else_block,
+            )
+        }
     }
 
     pub fn phi(&self, tp: Type, name: LLVMString) -> PhiNode {
@@ -295,10 +380,6 @@ impl Function {
     pub fn get_param(&self, index: u32) -> Value {
         unsafe { LLVMGetParam(self.value, index) }
     }
-
-    pub fn null() -> Self {
-        Function { value: ptr::null_mut() }
-    }
 }
 
 impl PhiNode {
@@ -306,5 +387,75 @@ impl PhiNode {
         let mut values = vec![incoming_value];
         let mut block = vec![incoming_block];
         unsafe { LLVMAddIncoming(self.value, values.as_mut_ptr(), block.as_mut_ptr(), 1) }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct Var {
+    value_ptr: Value,
+}
+
+impl Var {
+    pub fn alloc(builder: &Builder, tp: Type, value: Value, name: LLVMString) -> Self {
+        let value_ptr = builder.alloca(tp, name);
+        let result = Var { value_ptr };
+        result.store(builder, value);
+        return result;
+    }
+
+    pub fn load(&self, builder: &Builder) -> Value {
+        builder.load(self.value_ptr, llvm_str!(b"value\0"))
+    }
+
+    pub fn store(&self, builder: &Builder, value: Value) {
+        builder.store(value, self.value_ptr);
+    }
+}
+
+pub trait LoadValue {
+    fn load_value(&self, builder: &Builder) -> Value;
+}
+
+impl LoadValue for Value {
+    fn load_value(&self, _builder: &Builder) -> Value {
+        *self
+    }
+}
+
+impl LoadValue for Var {
+    fn load_value(&self, builder: &Builder) -> Value {
+        self.load(builder)
+    }
+}
+
+pub trait StoreValue<Result> {
+    fn get_name(&self) -> LLVMString;
+    fn store_value<V: LoadValue>(&self, builder: &Builder, value: V) -> Result;
+}
+
+impl StoreValue<Value> for LLVMString {
+    fn get_name(&self) -> LLVMString {
+        *self
+    }
+    fn store_value<V: LoadValue>(&self, builder: &Builder, value: V) -> Value {
+        value.load_value(&builder)
+    }
+}
+
+impl StoreValue<()> for Var {
+    fn get_name(&self) -> LLVMString {
+        llvm_str!(b"var_val\0")
+    }
+    fn store_value<V: LoadValue>(&self, builder: &Builder, value: V) -> () {
+        self.store(&builder, value.load_value(&builder));
+    }
+}
+
+impl StoreValue<()> for () {
+    fn get_name(&self) -> LLVMString {
+        llvm_str!(b"\0")
+    }
+    fn store_value<V: LoadValue>(&self, _builder: &Builder, _value: V) -> () {
+        ()
     }
 }

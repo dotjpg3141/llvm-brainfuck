@@ -7,7 +7,6 @@ fn optimize_no_change() {
     let assert_no_change = |v: Vec<_>| assert_optimize(v.clone(), v);
 
     assert_no_change(vec![SetValue(5)]);
-    assert_no_change(vec![SetPointer(5)]);
     assert_no_change(vec![AddValue(5)]);
     assert_no_change(vec![Input]);
     assert_no_change(vec![Output]);
@@ -34,6 +33,6 @@ fn optimize_loop() {
 }
 
 fn assert_optimize(input: Vec<BfInstruction>, expected: Vec<BfInstruction>) {
-    let actual = optimize(input);
+    let actual = InstructionList::from_vec(input).list;
     assert_eq!(actual, expected);
 }
