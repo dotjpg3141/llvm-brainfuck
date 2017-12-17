@@ -5,3 +5,4 @@ authors = ["jpg"]
 
 [dependencies]
 llvm-sys = "38"
+tempfile = "2.2.0"
