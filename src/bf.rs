@@ -141,10 +141,10 @@ impl InstructionList {
             _ => self.list.push(insn),
         }
     }
-    
+
     pub fn insert_debug_logs(&mut self) {
-    	for i in 0..self.list.len()+1 {
-    		self.list.insert(i * 2, BfInstruction::DebugLog);
-    	}
+        for i in 0..self.list.len() + 1 {
+            self.list.insert(i * 2, BfInstruction::DebugLog);
+        }
     }
 }

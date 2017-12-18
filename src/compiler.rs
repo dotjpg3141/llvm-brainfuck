@@ -8,7 +8,7 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
 
     let function_name = llvm_str!(b"brainfuck\0");
     let module = Module::new(llvm_str!(b"brainfuck\0"));
-	module.set_default_target();
+    module.set_default_target();
 
     let int1 = module.i1_type;
     let int32 = module.i32_type;
@@ -185,9 +185,9 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
 
     if allow_write!() {
         // NOTE(jpg): succsess: free memory and exit
-        builder.call(free, &mut [array], ());
         let result = builder.load(ptr_var, llvm_str!(b"val\0"));
         let result = builder.sext_or_bitcast(result, int32, llvm_str!(b"val\0"));
+        builder.call(free, &mut [array], ());
         builder.ret(result);
     }
 
@@ -202,7 +202,7 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
 
         // Output layout: <instruction> <index> <memory>
         // TODO(jpg): simplify this debug call, maybe by calling an external function
-        
+
         let mut bb = debug_log.append_basic_block(llvm_str!(b"entry\0"));
         let mut builder = Builder::new(&module, bb);
 
@@ -219,7 +219,7 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
         builder.call(putchar, &mut [builder.sint(value_type, '\n' as i64)], ());
 
         emit_print_char(&module, &builder, insn_index, 6, putchar, value_type);
-        builder.call( putchar, &mut [builder.sint(value_type, ' ' as i64)], ());
+        builder.call(putchar, &mut [builder.sint(value_type, ' ' as i64)], ());
         emit_print_char(&module, &builder, index, 6, putchar, value_type);
 
         // int i = 0; goto entry;
@@ -240,13 +240,9 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
         let val = builder.load(ptr, llvm_str!(b"val\0"));
 
         builder.call(putchar, &mut [val], ());
-        builder.call(putchar,  &mut [builder.sint(value_type, '|' as i64)], ());
+        builder.call(putchar, &mut [builder.sint(value_type, '|' as i64)], ());
 
-        let counter_body = builder.add(
-            counter_entry,
-            builder.uint(int32, 1),
-            llvm_str!(b"i\0"),
-        );
+        let counter_body = builder.add(counter_entry, builder.uint(int32, 1), llvm_str!(b"i\0"));
         builder.br(entry_bb);
 
         // exit: { ... }
@@ -261,13 +257,13 @@ pub fn compile(machine: &BfMachine, emit_main: bool) -> (Module, LLVMString) {
         counter_entry_phi.add_incoming(counter_before, before_bb);
         counter_entry_phi.add_incoming(counter_body, body_bb);
     }
-    
+
     if emit_main {
-    	let main = module.add_function(llvm_str!(b"main\0"), &mut[], int32);
-    	let bb = module.append_basic_block(main, llvm_str!(b"entry\0"));
-    	let builder = Builder::new(&module, bb);
-    	let result = builder.call(function, &mut[], llvm_str!(b"result\0"));
-    	builder.ret(result);
+        let main = module.add_function(llvm_str!(b"main\0"), &mut [], int32);
+        let bb = module.append_basic_block(main, llvm_str!(b"entry\0"));
+        let builder = Builder::new(&module, bb);
+        let result = builder.call(function, &mut [], llvm_str!(b"result\0"));
+        builder.ret(result);
     }
 
     (module, function_name)

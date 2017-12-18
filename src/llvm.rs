@@ -23,18 +23,18 @@ macro_rules! llvm_str {
 }
 
 pub fn to_llvm_string<T: Into<Vec<u8>>>(t: T) -> *mut i8 {
-	let mut vec: Vec<_> = t.into();
-	if vec.last() != Some(&0) {
-		vec.push(0);
-	}
-	unsafe { ffi::CString::from_vec_unchecked(vec).into_raw() }
+    let mut vec: Vec<_> = t.into();
+    if vec.last() != Some(&0) {
+        vec.push(0);
+    }
+    unsafe { ffi::CString::from_vec_unchecked(vec).into_raw() }
 }
 
 pub fn from_llvm_string(s: *const i8) -> Result<String, str::Utf8Error> {
-	unsafe {
-		let cstr = ffi::CStr::from_ptr(s);
-		cstr.to_str().map(|s| s.to_owned())
-	}		
+    unsafe {
+        let cstr = ffi::CStr::from_ptr(s);
+        cstr.to_str().map(|s| s.to_owned())
+    }
 }
 
 pub struct Module {
@@ -89,31 +89,31 @@ impl Module {
             }
         }
     }
-    
+
     pub fn set_target(&self, target_triple: LLVMString) {
-    	unsafe {
-    		LLVMSetTarget(self.inner_module, target_triple);
-    	}
+        unsafe {
+            LLVMSetTarget(self.inner_module, target_triple);
+        }
     }
-    
+
     pub fn set_default_target(&self) {
-    	unsafe {
-    		let target_triple = LLVMGetDefaultTargetTriple();
-    		self.set_target(target_triple);
-    	}
+        unsafe {
+            let target_triple = LLVMGetDefaultTargetTriple();
+            self.set_target(target_triple);
+        }
     }
-    
+
     pub fn get_target(&self) -> Option<String> {
-    	unsafe {
-    		let target_triple_message = LLVMGetDefaultTargetTriple();
-    		if target_triple_message.is_null() {
-    			None
-    		} else {
-				let target_triple = from_llvm_string(target_triple_message);
-				LLVMDisposeMessage(target_triple_message);
-				target_triple.ok()
-    		}
-    	}
+        unsafe {
+            let target_triple_message = LLVMGetDefaultTargetTriple();
+            if target_triple_message.is_null() {
+                None
+            } else {
+                let target_triple = from_llvm_string(target_triple_message);
+                LLVMDisposeMessage(target_triple_message);
+                target_triple.ok()
+            }
+        }
     }
 
     pub fn add_function(
@@ -194,60 +194,66 @@ impl Module {
             LLVMDisposeExecutionEngine(ee);
         }
     }
-    
+
     pub fn write_object_file(&self, path: &str) -> Result<(), String> {
-    	unsafe {
-    	
-	        LLVM_InitializeAllTargetInfos();
-			LLVM_InitializeAllTargets();
-			LLVM_InitializeAllTargetMCs();
-			LLVM_InitializeAllAsmParsers();
-			LLVM_InitializeAllAsmPrinters();
-			
-    		let target_triple = LLVMGetTarget(self.inner_module);
-    		
-    		let mut target = ptr::null_mut();
-    		let mut error_message = ptr::null_mut();
-    		LLVMGetTargetFromTriple(target_triple, &mut target, &mut error_message);
-    		
-    		if !error_message.is_null() {
-    		
-				let error_message = from_llvm_string(error_message)
-					.map_err(|_| "Cannot determine target tripple; original LLVM error message is no valid utf8".to_owned())?;
-					
-				return Err(error_message);
-    		}
-    		
-    		let cpu = llvm_str!(b"generic\0");
-    		let features = llvm_str!(b"\0");
-    		let target_machine = LLVMCreateTargetMachine(
-    			target,
-    			target_triple,
-    			cpu,
-    			features,
-    			LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
-    			LLVMRelocMode::LLVMRelocDefault,
-    			LLVMCodeModel::LLVMCodeModelDefault);
-    		
-    		let mut error_message = to_llvm_string("asdasdasd");
-    		let result = LLVMTargetMachineEmitToFile(
-    			target_machine,
-    			self.inner_module,
-    			to_llvm_string(path),
-    			LLVMCodeGenFileType::LLVMObjectFile,
-    			&mut error_message);
-    		
-    		LLVMDisposeTargetMachine(target_machine);
-    		
-    		if result != 0 {
-    			let error_message = from_llvm_string(error_message)
-					.map_err(|_| "Cannot emit object file; original LLVM error message is no valid utf8".to_owned())?;
-    			
-    			return Err(error_message)
-    		}
-    	}
-    	
-    	Ok(())
+        unsafe {
+
+            LLVM_InitializeAllTargetInfos();
+            LLVM_InitializeAllTargets();
+            LLVM_InitializeAllTargetMCs();
+            LLVM_InitializeAllAsmParsers();
+            LLVM_InitializeAllAsmPrinters();
+
+            let target_triple = LLVMGetTarget(self.inner_module);
+
+            let mut target = ptr::null_mut();
+            let mut error_message = ptr::null_mut();
+            LLVMGetTargetFromTriple(target_triple, &mut target, &mut error_message);
+
+            if !error_message.is_null() {
+
+                let error_message = from_llvm_string(error_message).map_err(|_| {
+                    "Cannot determine target tripple; original LLVM error message is no valid utf8"
+                        .to_owned()
+                })?;
+
+                return Err(error_message);
+            }
+
+            let cpu = llvm_str!(b"generic\0");
+            let features = llvm_str!(b"\0");
+            let target_machine = LLVMCreateTargetMachine(
+                target,
+                target_triple,
+                cpu,
+                features,
+                LLVMCodeGenOptLevel::LLVMCodeGenLevelAggressive,
+                LLVMRelocMode::LLVMRelocDefault,
+                LLVMCodeModel::LLVMCodeModelDefault,
+            );
+
+            let mut error_message = to_llvm_string("asdasdasd");
+            let result = LLVMTargetMachineEmitToFile(
+                target_machine,
+                self.inner_module,
+                to_llvm_string(path),
+                LLVMCodeGenFileType::LLVMObjectFile,
+                &mut error_message,
+            );
+
+            LLVMDisposeTargetMachine(target_machine);
+
+            if result != 0 {
+                let error_message = from_llvm_string(error_message).map_err(|_| {
+                    "Cannot emit object file; original LLVM error message is no valid utf8"
+                        .to_owned()
+                })?;
+
+                return Err(error_message);
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -461,15 +467,6 @@ impl Drop for Builder {
 }
 
 impl Function {
-    pub fn verify(&self) {
-        unsafe {
-            LLVMVerifyFunction(
-                self.value,
-                LLVMVerifierFailureAction::LLVMPrintMessageAction,
-            );
-        }
-    }
-
     pub fn append_basic_block(&self, name: LLVMString) -> BasicBlock {
         unsafe { LLVMAppendBasicBlock(self.value, name) }
     }
