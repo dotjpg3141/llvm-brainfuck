@@ -40,6 +40,7 @@ impl InstructionList {
         }
     }
 
+    #[allow(dead_code)] // NOTE(jpg): currently only used by test code
     pub fn from_vec(input: Vec<BfInstruction>) -> Self {
         let mut list = Self::new();
         for insn in input {

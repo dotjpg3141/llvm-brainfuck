@@ -2,14 +2,14 @@ pub extern crate llvm_sys as sys;
 
 use std::{mem, ptr, ffi, str};
 
-use self::sys::*;
+use self::sys::LLVMIntPredicate;
 use self::sys::prelude::*;
 use self::sys::core::*;
 use self::sys::execution_engine::*;
 use self::sys::target::*;
 use self::sys::analysis::*;
 use self::sys::transforms::pass_manager_builder::*;
-use llvm::sys::target_machine::*;
+use self::sys::target_machine::*;
 
 pub type LLVMString = *const i8;
 pub type Value = LLVMValueRef;
@@ -173,7 +173,7 @@ impl Module {
         }
     }
 
-    pub fn jit_function(&self, function_name: LLVMString) {
+    pub fn jit_function<Ret>(&self, function_name: LLVMString) -> Ret {
         unsafe {
             LLVMLinkInMCJIT();
             LLVM_InitializeNativeTarget();
@@ -184,14 +184,12 @@ impl Module {
             LLVMCreateExecutionEngineForModule(&mut ee, self.inner_module, &mut out);
 
             let addr = LLVMGetFunctionAddress(ee, function_name);
-            let func: extern "C" fn() -> u8 = mem::transmute(addr);
-
-            println!(">>>");
-            let return_value = func();
-            println!("<<<");
-            println!("Return Value: {}", return_value);
+            let func: extern "C" fn() -> Ret = mem::transmute(addr);
+            let result = func();
 
             LLVMDisposeExecutionEngine(ee);
+
+            result
         }
     }
 
